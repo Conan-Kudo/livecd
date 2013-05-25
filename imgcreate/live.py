@@ -1013,15 +1013,18 @@ class ppc64LiveImageCreator(ppcLiveImageCreator):
         return ["kernel.ppc"] + \
                ppcLiveImageCreator._get_excluded_packages(self)
 
-arch = rpmUtils.arch.getBaseArch()
-if arch in ("i386", "x86_64"):
-    LiveImageCreator = x86LiveImageCreator
-elif arch in ("ppc",):
-    LiveImageCreator = ppcLiveImageCreator
-elif arch in ("ppc64",):
-    LiveImageCreator = ppc64LiveImageCreator
-elif arch.startswith('arm'):
-    LiveImageCreator = LiveImageCreatorBase
-
-else:
-    raise CreatorError("Architecture not supported!")
+## Mageia has only x86 at the moment
+## TODO add ARM when ready
+LiveImageCreator = x86LiveImageCreator
+#arch = rpmUtils.arch.getBaseArch()
+#if arch in ("i386", "x86_64"):
+#    LiveImageCreator = x86LiveImageCreator
+#elif arch in ("ppc",):
+#    LiveImageCreator = ppcLiveImageCreator
+#elif arch in ("ppc64",):
+#    LiveImageCreator = ppc64LiveImageCreator
+#elif arch.startswith('arm'):
+#    LiveImageCreator = LiveImageCreatorBase
+#
+#else:
+#    raise CreatorError("Architecture not supported!")
