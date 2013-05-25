@@ -25,10 +25,10 @@ import logging
 import urlgrabber
 import selinux
 
-try:
-    import system_config_keyboard.keyboard as keyboard
-except ImportError:
-    import rhpl.keyboard as keyboard
+#try:
+    #import system_config_keyboard.keyboard as keyboard
+#except ImportError:
+    #import rhpl.keyboard as keyboard
 
 import pykickstart.commands as kscommands
 import pykickstart.constants as ksconstants
@@ -138,10 +138,16 @@ class LanguageConfig(KickstartConfig):
 class KeyboardConfig(KickstartConfig):
     """A class to apply a kickstart keyboard configuration to a system."""
     def apply(self, kskeyboard):
-        k = keyboard.Keyboard()
+        #k = keyboard.Keyboard()
+
         if kskeyboard.keyboard:
-            k.set(kskeyboard.keyboard)
-        k.write(self.instroot)
+            f = open(self.path("/etc/sysconfig/keyboard"), "w+")
+            f.write("KEYBOARD=\"" + kskeyboard.keyboard + "\"\n")
+            f.close()
+
+        #if kskeyboard.keyboard:
+            #k.set(kskeyboard.keyboard)
+        #k.write(self.instroot)
 
 class TimezoneConfig(KickstartConfig):
     """A class to apply a kickstart timezone configuration to a system."""
