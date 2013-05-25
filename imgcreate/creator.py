@@ -26,12 +26,10 @@ import logging
 import subprocess
 
 import selinux
-import yum
 import rpm
 
 from imgcreate.errors import *
 from imgcreate.fs import *
-from imgcreate.yuminst import *
 from imgcreate import kickstart
 
 FSLABEL_MAXLEN = 32
@@ -504,21 +502,30 @@ class ImageCreator(object):
 
         self._mount_instroot(base_on)
 
-        for d in ("/dev/pts", "/etc", "/boot", "/var/log", "/var/cache/yum", "/sys", "/proc"):
+        for d in ("/dev/pts", "/etc", "/boot", "/var/log", "/var/cache/urpmi", "/sys", "/proc"):
             makedirs(self._instroot + d)
 
-        cachesrc = cachedir or (self.__builddir + "/yum-cache")
+        cachesrc = cachedir or (self.__builddir + "/urpmi-cache")
         makedirs(cachesrc)
+        if cachedir:
+          self._urpmi_cache = True
+        else:
+          self._urpmi_cache = False
 
         # bind mount system directories into _instroot
         for (f, dest) in [("/sys", None), ("/proc", None),
                           ("/dev/pts", None), ("/dev/shm", None),
-                          (self.__selinux_mountpoint, self.__selinux_mountpoint),
-                          (cachesrc, "/var/cache/yum")]:
+                          (self.__selinux_mountpoint, self.__selinux_mountpoint)]:
             if os.path.exists(f):
                 self.__bindmounts.append(BindChrootMount(f, self._instroot, dest))
             else:
                 logging.warn("Skipping (%s,%s) because source doesn't exist." % (f, dest))
+
+        if cachedir:
+          urpmi_conf = self.__builddir + "/urpmi_conf"
+          self.__bindmounts.append(BindChrootMount(cachesrc, urpmi_conf, "/var/cache/urpmi"))
+        else:
+          self.__bindmounts.append(BindChrootMount(cachesrc, self._instroot, "/var/cache/urpmi"))
 
         self._do_bindmounts()
 
@@ -609,7 +616,7 @@ class ImageCreator(object):
                                           self._get_excluded_packages()):
             ayum.deselectPackage(pkg)
 
-    def install(self, repo_urls = {}):
+    def install_urpmi(self, repo_urls = {}):
         """Install packages into the install root.
 
         This function installs the packages listed in the supplied kickstart
@@ -621,55 +628,39 @@ class ImageCreator(object):
                      the kickstart to be overridden.
 
         """
-        yum_conf = self._mktemp(prefix = "yum.conf-")
-
-        ayum = LiveCDYum(releasever=self.releasever, useplugins=self.useplugins)
-        ayum.setup(yum_conf, self._instroot, cacheonly=self.cacheonly)
+        urpmi_conf = self.__builddir + "/urpmi_conf"
+        time.sleep(5)
 
         for repo in kickstart.get_repos(self.ks, repo_urls):
             (name, baseurl, mirrorlist, proxy, inc, exc, cost) = repo
+            # TODO proxy and cost 
+            subprocess.call(["/usr/sbin/urpmi.addmedia", "--urpmi-root", urpmi_conf, name, baseurl])
+        packages = self.ks.handler.packages.packageList
+        packages_post = self.ks.handler.packages_post.packageList
 
-            yr = ayum.addRepository(name, baseurl, mirrorlist)
-            if inc:
-                yr.includepkgs = inc
-            if exc:
-                yr.exclude = exc
-            if proxy:
-                yr.proxy = proxy
-            if cost is not None:
-                yr.cost = cost
-        ayum.setup(yum_conf, self._instroot)
+        #for package in self.ks.handler.packages.packageList:
+            #subprocess.call(["/usr/sbin/urpmi", "--auto", "--urpmi-root", urpmi_conf, "--root", self._instroot, package])
+        urpmi_cache = urpmi_conf + "/var/cache/urpmi"
+        if self._urpmi_cache:
+          subprocess.call(["/usr/sbin/urpmi", "--auto", "--download-all", urpmi_cache, "--noclean", "--no-verify-rpm", "--no-suggests", "--urpmi-root", urpmi_conf, "--root", self._instroot] + packages)
+        else:
+          subprocess.call(["/usr/sbin/urpmi", "--auto", "--no-verify-rpm", "--no-suggests", "--urpmi-root", urpmi_conf, "--root", self._instroot] + packages)
 
-        if kickstart.exclude_docs(self.ks):
-            rpm.addMacro("_excludedocs", "1")
-        if not kickstart.selinux_enabled(self.ks):
-            rpm.addMacro("__file_context_path", "%{nil}")
-        if kickstart.inst_langs(self.ks) != None:
-            rpm.addMacro("_install_langs", kickstart.inst_langs(self.ks))
+        if packages_post:
+          if self._urpmi_cache:
+            subprocess.call(["/usr/sbin/urpmi", "--auto", "--download-all", urpmi_cache, "--noclean", "--no-verify-rpm", "--no-suggests", "--urpmi-root", urpmi_conf, "--root", self._instroot] + packages_post)
+          else:
+            subprocess.call(["/usr/sbin/urpmi", "--auto", "--no-verify-rpm", "--no-suggests", "--urpmi-root", urpmi_conf, "--root", self._instroot] + packages_post)
 
-        try:
-            self.__select_packages(ayum)
-            self.__select_groups(ayum)
-            self.__deselect_packages(ayum)
-
-            ayum.runInstall()
-        except yum.Errors.RepoError, e:
-            raise CreatorError("Unable to download from repo : %s" % (e,))
-        except yum.Errors.YumBaseError, e:
-            raise CreatorError("Unable to install: %s" % (e,))
-        finally:
-            ayum.closeRpmDB()
-            ayum.close()
-            os.unlink(yum_conf)
-
-        # do some clean up to avoid lvm info leakage.  this sucks.
-        for subdir in ("cache", "backup", "archive"):
-            lvmdir = self._instroot + "/etc/lvm/" + subdir
-            try:
-                for f in os.listdir(lvmdir):
-                    os.unlink(lvmdir + "/" + f)
-            except:
-                pass
+## TODO check if next is needed in mageia as well
+#        # do some clean up to avoid lvm info leakage.  this sucks.
+#        for subdir in ("cache", "backup", "archive"):
+#            lvmdir = self._instroot + "/etc/lvm/" + subdir
+#            try:
+#                for f in os.listdir(lvmdir):
+#                    os.unlink(lvmdir + "/" + f)
+#            except:
+#                pass
 
     def _run_post_scripts(self):
         for s in kickstart.get_post_scripts(self.ks):
@@ -717,7 +708,8 @@ class ImageCreator(object):
         """
         ksh = self.ks.handler
 
-        kickstart.LanguageConfig(self._instroot).apply(ksh.lang)
+##TODO language config
+#        kickstart.LanguageConfig(self._instroot).apply(ksh.lang)
         kickstart.KeyboardConfig(self._instroot).apply(ksh.keyboard)
         kickstart.TimezoneConfig(self._instroot).apply(ksh.timezone)
         kickstart.AuthConfig(self._instroot).apply(ksh.authconfig)
@@ -769,7 +761,7 @@ class ImageCreator(object):
 
         """
         self.mount()
-        self.install()
+        self.install_urpmi()
         self.configure()
         self.unmount()
         self.package()
