@@ -221,11 +221,11 @@ class LiveImageCreatorBase(LoopImageCreator):
         self.base_on = True
         LoopImageCreator._mount_instroot(self, base_on)
         self.__write_initrd_conf(self._instroot + "/etc/sysconfig/mkinitrd")
-        self.__write_dracut_conf(self._instroot + "/etc/dracut.conf.d/02livecd.conf")
+        self.__write_dracut_conf(self._instroot + "/etc/dracut.conf.d/99livecd.conf")
 
     def _unmount_instroot(self):
         self.__restore_file(self._instroot + "/etc/sysconfig/mkinitrd")
-        self.__restore_file(self._instroot + "/etc/dracut.conf.d/02livecd.conf")
+        self.__restore_file(self._instroot + "/etc/dracut.conf.d/99livecd.conf")
         LoopImageCreator._unmount_instroot(self)
 
     def __ensure_isodir(self):
@@ -265,7 +265,7 @@ class LiveImageCreatorBase(LoopImageCreator):
         return "vfat msdos ";
 
     def __extra_drivers(self):
-        retval = "sr_mod sd_mod ide-cd cdrom "
+        retval = "isofs sr_mod sd_mod ide-cd cdrom "
         for module in self.__modules:
             if module == "=usb":
                 retval = retval + "ehci_hcd uhci_hcd ohci_hcd "
@@ -305,7 +305,8 @@ class LiveImageCreatorBase(LoopImageCreator):
         f = open(path, "a")
         f.write('filesystems+="' + self.__extra_filesystems() + ' "\n')
         f.write('drivers+="' + self.__extra_drivers() + ' "\n')
-        f.write('add_dracutmodules+=" dmsquash-live pollcdrom "')
+        f.write('add_dracutmodules+=" dmsquash-live pollcdrom "\n')
+        f.write('hostonly=no')
         f.close()
 
     def __create_iso(self, isodir):
