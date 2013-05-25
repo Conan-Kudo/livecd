@@ -871,6 +871,7 @@ class ppcLiveImageCreator(LiveImageCreatorBase):
                             destdir + "/initrd.img")
             isDracut = True
         else:
+            isDracut = True
             shutil.copyfile(bootdir + "/initrd-" + version + ".img",
                             destdir + "/initrd.img")
 
