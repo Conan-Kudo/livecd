@@ -262,7 +262,7 @@ class LiveImageCreatorBase(LoopImageCreator):
         return env
 
     def __extra_filesystems(self):
-        return "vfat msdos ";
+        return "squashfs ext4 ext3 ext2 vfat msdos ";
 
     def __extra_drivers(self):
         retval = "isofs sr_mod sd_mod ide-cd cdrom "
