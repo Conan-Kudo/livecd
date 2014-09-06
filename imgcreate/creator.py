@@ -632,8 +632,8 @@ class ImageCreator(object):
         time.sleep(5)
 
         for repo in kickstart.get_repos(self.ks, repo_urls):
-            (name, baseurl, mirrorlist, proxy, inc, exc, cost) = repo
-            # TODO proxy and cost 
+            (name, baseurl, mirrorlist, proxy, inc, exc, cost, last) = repo
+            # TODO proxy and cost and check last parameter
             subprocess.call(["/usr/sbin/urpmi.addmedia", "--urpmi-root", urpmi_conf, name, baseurl])
         packages = self.ks.handler.packages.packageList
         packages_post = self.ks.handler.packages_post.packageList

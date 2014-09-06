@@ -828,7 +828,8 @@ submenu 'Troubleshooting -->' {
 
     def _configure_bootloader(self, isodir):
         self._configure_syslinux_bootloader(isodir)
-        self._configure_efi_bootloader(isodir)
+#TODO EFI anaselli
+#        self._configure_efi_bootloader(isodir)
 
 class ppcLiveImageCreator(LiveImageCreatorBase):
     def _get_mkisofs_options(self, isodir):
