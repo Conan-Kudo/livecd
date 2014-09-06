@@ -23,10 +23,8 @@ import sys
 import time
 import optparse
 import logging
-import selinux
 
 import imgcreate
-from imgcreate.fs import makedirs
 
 class Usage(Exception):
     def __init__(self, msg = None, no_error = False):
@@ -106,7 +104,7 @@ def parse_options(args):
         else:
             options.image_type = 'livecd'
     if options.image_type not in ('livecd', 'image'):
-        raise Usage("'%s' is a recognized image type" % options.image_type)
+        raise Usage("'%s' is not a recognized image type" % options.image_type)
 
     # image-create compatibility: Last argument is kickstart file
     if len(args) == 1:
@@ -114,7 +112,7 @@ def parse_options(args):
     if len(args):
         raise Usage("Extra arguments given")
 
-    if not options.kscfg:
+    if not options.kscfg or not os.path.exists(options.kscfg):
         raise Usage("Kickstart file must be provided")
     if options.base_on and not os.path.isfile(options.base_on):
         raise Usage("Image file '%s' does not exist" %(options.base_on,))
@@ -143,12 +141,6 @@ def main():
     if os.geteuid () != 0:
         print >> sys.stderr, "You must run %s as root" % sys.argv[0]
         return 1
-
-    # Set selinux to Permissive if it is enforcing
-    selinux_enforcing = False
-    if selinux.is_selinux_enabled() and selinux.security_getenforce():
-        selinux_enforcing = True
-        selinux.security_setenforce(0)
 
     if options.fslabel:
         fslabel = options.fslabel
@@ -182,29 +174,30 @@ def main():
     logging.info("Using title '%s' and product '%s'" % (title, product))
 
     ks = imgcreate.read_kickstart(options.kscfg)
+    if not ks.handler.repo.seen:
+        print >> sys.stderr, "Kickstart (%s) must have at least one repository." % (options.kscfg)
+        return 1
 
-    if options.image_type == 'livecd':
-        creator = imgcreate.LiveImageCreator(ks, name,
-                                        fslabel=fslabel,
-                                        releasever=options.releasever,
-                                        tmpdir=os.path.abspath(options.tmpdir),
-                                        useplugins=options.plugins,
-                                        title=title, product=product,
-                                        cacheonly=options.cacheonly,
-                                        docleanup=not options.nocleanup)
-    elif options.image_type == 'image':
-        creator = imgcreate.LoopImageCreator(ks, name,
-                                        fslabel=fslabel,
-                                        releasever=options.releasever,
-                                        useplugins=options.plugins,
-                                        tmpdir=os.path.abspath(options.tmpdir),
-                                        cacheonly=options.cacheonly,
-                                        docleanup=not options.nocleanup)
-    else:
-        # Cannot happen, we validate this when parsing options.
-        logging.error(u"'%s' is not a valid image type" % options.image_type)
-        if selinux_enforcing:
-            selinux.security_setenforce(1)
+    try:
+        if options.image_type == 'livecd':
+            creator = imgcreate.LiveImageCreator(ks, name,
+                                            fslabel=fslabel,
+                                            releasever=options.releasever,
+                                            tmpdir=os.path.abspath(options.tmpdir),
+                                            useplugins=options.plugins,
+                                            title=title, product=product,
+                                            cacheonly=options.cacheonly,
+                                            docleanup=not options.nocleanup)
+        elif options.image_type == 'image':
+            creator = imgcreate.LoopImageCreator(ks, name,
+                                            fslabel=fslabel,
+                                            releasever=options.releasever,
+                                            useplugins=options.plugins,
+                                            tmpdir=os.path.abspath(options.tmpdir),
+                                            cacheonly=options.cacheonly,
+                                            docleanup=not options.nocleanup)
+    except imgcreate.CreatorError as e:
+        logging.error(u"%s creation failed: %s", options.image_type, e)
         return 1
 
     creator.compress_type = options.compress_type
@@ -228,8 +221,6 @@ def main():
         return 1
     finally:
         creator.cleanup()
-        if selinux_enforcing:
-            selinux.security_setenforce(1)
 
     return 0
 

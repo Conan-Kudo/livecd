@@ -121,7 +121,7 @@ class KickstartConfig(object):
     def call(self, args):
         if not os.path.exists("%s/%s" %(self.instroot, args[0])):
             raise errors.KickstartError("Unable to run %s!" %(args))
-        subprocess.call(args, preexec_fn = self.chroot)
+        return subprocess.call(args, preexec_fn = self.chroot)
 
     def apply(self):
         pass
@@ -139,6 +139,9 @@ class KeyboardConfig(KickstartConfig):
     """A class to apply a kickstart keyboard configuration to a system."""
     def apply(self, kskeyboard):
         #k = keyboard.Keyboard()
+
+        if not kskeyboard.keyboard:
+            kskeyboard.keyboard = "us"
 
         if kskeyboard.keyboard:
             f = open(self.path("/etc/sysconfig/keyboard"), "w+")
@@ -264,7 +267,7 @@ class XConfig(KickstartConfig):
             default_target = self.path('/etc/systemd/system/default.target')
             if os.path.islink(default_target):
                  os.unlink(default_target)
-            os.symlink(self.path('/lib/systemd/system/graphical.target'), default_target)
+            os.symlink('/lib/systemd/system/graphical.target', default_target)
 
 class RPMMacroConfig(KickstartConfig):
     """A class to apply the specified rpm macros to the filesystem"""
@@ -448,7 +451,12 @@ class SelinuxConfig(KickstartConfig):
         if not os.path.exists(self.path("/sbin/setfiles")):
             return
 
-        self.call(["/sbin/setfiles", "-p", "-e", "/proc", "-e", "/sys", "-e", "/dev", selinux.selinux_file_context_path(), "/"])
+        rc = self.call(["/sbin/setfiles", "-p", "-e", "/proc", "-e", "/sys", "-e", "/dev", selinux.selinux_file_context_path(), "/"])
+        if rc:
+            if ksselinux.selinux == ksconstants.SELINUX_ENFORCING:
+                raise errors.KickstartError("SELinux relabel failed.")
+            else:
+                logging.error("SELinux relabel failed.")
 
     def apply(self, ksselinux):
         selinux_config = "/etc/selinux/config"
@@ -541,6 +549,7 @@ def get_repos(ks, repo_urls = {}):
         baseurl = repo.baseurl
         mirrorlist = repo.mirrorlist
         proxy = repo.proxy
+        sslverify = not repo.noverifyssl
 
         if repo.name in repo_urls:
             baseurl = repo_urls[repo.name]
@@ -548,7 +557,7 @@ def get_repos(ks, repo_urls = {}):
 
         if repos.has_key(repo.name):
             logging.warn("Overriding already specified repo %s" %(repo.name,))
-        repos[repo.name] = (repo.name, baseurl, mirrorlist, proxy, inc, exc, repo.cost)
+        repos[repo.name] = (repo.name, baseurl, mirrorlist, proxy, inc, exc, repo.cost, sslverify)
 
     return repos.values()
 
@@ -586,7 +595,7 @@ def inst_langs(ks):
 def get_pre_scripts(ks):
     scripts = []
     for s in ks.handler.scripts:
-        if s.type != ksparser.KS_SCRIPT_PRE:
+        if s.type != ksconstants.KS_SCRIPT_PRE:
             continue
         scripts.append(s)
     return scripts
@@ -594,7 +603,7 @@ def get_pre_scripts(ks):
 def get_post_scripts(ks):
     scripts = []
     for s in ks.handler.scripts:
-        if s.type != ksparser.KS_SCRIPT_POST:
+        if s.type != ksconstants.KS_SCRIPT_POST:
             continue
         scripts.append(s)
     return scripts

@@ -262,7 +262,7 @@ class LiveImageCreatorBase(LoopImageCreator):
         return env
 
     def __extra_filesystems(self):
-        return "squashfs ext4 ext3 ext2 vfat msdos ";
+        return "vfat msdos isofs ext4 xfs btrfs squashfs ext3 ext2";
 
     def __extra_drivers(self):
         retval = "isofs sr_mod sd_mod ide-cd cdrom "
@@ -306,7 +306,8 @@ class LiveImageCreatorBase(LoopImageCreator):
         f.write('filesystems+="' + self.__extra_filesystems() + ' "\n')
         f.write('drivers+="' + self.__extra_drivers() + ' "\n')
         f.write('add_dracutmodules+=" dmsquash-live pollcdrom "\n')
-        f.write('hostonly=no')
+        f.write('hostonly="no"\n')
+        f.write('dracut_rescue_image="no"\n')
         f.close()
 
     def __create_iso(self, isodir):
@@ -427,7 +428,7 @@ class x86LiveImageCreator(LiveImageCreatorBase):
         return "mboot.c32"
 
     def __copy_syslinux_files(self, isodir, menu, mboot = None):
-        files = ["isolinux.bin", menu]
+        files = ["isolinux.bin", "ldlinux.c32", "libcom32.c32", "libutil.c32", menu]
         if mboot:
             files += [mboot]
 
@@ -604,7 +605,7 @@ menu separator
                                            liveargs = kern_opts,
                                            long = "Start " + long + " in ^basic graphics mode.",
                                            short = "basic" + index,
-                                           extra = "xdriver=vesa nomodeset",
+                                           extra = "nomodeset",
                                            help = "Try this option out if you're having trouble starting.",
                                            index = index))
 
@@ -733,7 +734,7 @@ menu end
 
     def __get_basic_efi_config(self, **args):
         return """
-set default="0"
+set default="1"
 
 function load_video {
   insmod efi_gop
@@ -782,14 +783,24 @@ search --no-floppy --set=root -l '%(isolabel)s'
                 continue
             cfg += self.__get_efi_image_stanza(fslabel = self.fslabel,
                                                liveargs = kernel_options,
-                                               long = name,
+                                               long = "Start " + self.product,
                                                extra = "", index = index)
             if checkisomd5:
                 cfg += self.__get_efi_image_stanza(fslabel = self.fslabel,
                                                    liveargs = kernel_options,
-                                                   long = "Verify and Boot " + name,
+                                                   long = "Test this media & start " + self.product,
                                                    extra = "rd.live.check",
                                                    index = index)
+            cfg += """
+submenu 'Troubleshooting -->' {
+"""
+            cfg += self.__get_efi_image_stanza(fslabel = self.fslabel,
+                                               liveargs = kernel_options,
+                                               long = "Start " + self.product + " in basic graphics mode",
+                                               extra = "nomodeset", index = index)
+
+            cfg+= """}
+"""
             break
 
         return cfg
@@ -836,8 +847,9 @@ class ppcLiveImageCreator(LiveImageCreatorBase):
                LiveImageCreatorBase._get_excluded_packages(self)
 
     def __copy_boot_file(self, destdir, file):
-        for dir in ["/usr/share/ppc64-utils",
-                    "/usr/lib/anaconda-runtime/boot"]:
+        for dir in [self._instroot+"/usr/share/ppc64-utils",
+                    self._instroot+"/usr/lib/anaconda-runtime/boot",
+                    "/usr/share/lorax/config_files/ppc"]:
             path = self._instroot + dir + "/" + file
             if not os.path.exists(path):
                 continue

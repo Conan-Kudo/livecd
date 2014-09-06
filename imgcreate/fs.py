@@ -72,7 +72,7 @@ def squashfs_compression_type(sqfs_img):
 
 def mksquashfs(in_img, out_img, compress_type):
 # Allow gzip to work for older versions of mksquashfs
-    if compress_type == "gzip":
+    if not compress_type or compress_type == "gzip":
         args = ["/usr/bin/mksquashfs", in_img, out_img]
     else:
         args = ["/usr/bin/mksquashfs", in_img, out_img, "-comp", compress_type]
@@ -453,11 +453,16 @@ class ExtDiskMount(DiskMount):
 
     def __format_filesystem(self):
         logging.info("Formating %s filesystem on %s" % (self.fstype, self.disk.device))
-        rc = call(["/sbin/mkfs." + self.fstype,
-                   "-F", "-L", self.fslabel,
-                   "-m", "1", "-b", str(self.blocksize),
-                   self.disk.device])
-        #          str(self.disk.size / self.blocksize)])
+        args = [ "/sbin/mkfs." + self.fstype ]
+        if self.fstype.startswith("ext"):
+            args = args + [ "-F", "-L", self.fslabel, "-m", "1", "-b", str(self.blocksize) ]
+        elif self.fstype == "xfs":
+            args = args + [ "-L", self.fslabel[0:10], "-b", "size=%s" % str(self.blocksize) ]
+        elif self.fstype == "btrfs":
+            args = args + [ "-L", self.fslabel ]
+        args = args + [self.disk.device]
+        print args
+        rc = call(args)
 
         if rc != 0:
             raise MountError("Error creating %s filesystem" % (self.fstype,))

@@ -35,6 +35,7 @@ shortusage() {
                        [--compress] [--skipcompress] [--swap-size-mb <size>]
                        [--overlay-size-mb <size>] [--home-size-mb <size>]
                        [--delete-home] [--crypted-home] [--unencrypted-home]
+                       [--updates updates.img] [--ks kickstart] [--label label]
                        <source> <target device>
 
     (Enter livecd-iso-to-disk --help on the command line for more information.)"
@@ -213,7 +214,7 @@ usage() {
         LiveOS installation.)  One way to conserve the unrecoverable, overlay
         file space, is to specify a persistent home folder for user files, see
         --home-size-mb below.  The target storage device must have enough free
-        space for the image and the overlay.  A maximum <size> of 2047 MiB is
+        space for the image and the overlay.  A maximum <size> of 4095 MiB is
         permitted for vfat-formatted devices.  If there is insufficient room on
         your device, you will be given information to help in adjusting your
         settings.
@@ -228,7 +229,7 @@ usage() {
         have enough free space for the image, any overlay, and the home
         directory.  Note that the --delete-home option must also be selected to
         replace an existing persistent home with a new, empty one.  A maximum
-        <size> of 2047 MiB is permitted for vfat-formatted devices.  If there is
+        <size> of 4095 MiB is permitted for vfat-formatted devices.  If there is
         insufficient room on your device, you will be given information to help
         in adjusting your settings.
 
@@ -243,6 +244,18 @@ usage() {
 
     --unencrypted-home
         Prevents the default option to encrypt a new persistent home directory.
+
+    --updates updates.img
+        Setup inst.updates to point to an updates image on the device. Anaconda
+        uses this for testing updates to an iso without needing to make a new iso.
+
+    --ks kickstart
+        Setup inst.ks to point to an kickstart file on the device. Use this for
+        automating installs on boot.
+
+    --label label
+       Specifies a specific label instead of default LIVE. Useful when you do
+       unattended installs which pas a label to inst.ks
 
     CONTRIBUTORS
 
@@ -436,7 +449,7 @@ createGPTLayout() {
     sleep 5
     TGTDEV=${device}1
     umount $TGTDEV &> /dev/null || :
-    /sbin/mkdosfs -n LIVE $TGTDEV
+    /sbin/mkdosfs -n $label $TGTDEV
     TGTLABEL="UUID=$(/sbin/blkid -s UUID -o value $TGTDEV)"
 }
 
@@ -511,7 +524,7 @@ createEXTFSLayout() {
     else
         mkfs=/sbin/mkfs.ext4
     fi
-    $mkfs -L LIVE $TGTDEV
+    $mkfs -L $label $TGTDEV
     TGTLABEL="UUID=$(/sbin/blkid -s UUID -o value $TGTDEV)"
 }
 
@@ -519,7 +532,7 @@ checkGPT() {
     dev=$1
     getdisk $dev
 
-    if [ "$(/sbin/parted -m $device p 2>/dev/null |grep -ic :gpt:)" -eq "0" ]; then
+    if [ "$(LC_ALL=C /sbin/parted -m $device p 2>/dev/null |grep -ic :gpt:)" -eq "0" ]; then
         echo "EFI boot requires a GPT partition table."
         echo "This can be done manually or you can run with --format"
         exitclean
@@ -554,22 +567,28 @@ checkFilesystem() {
         fi
     fi
 
+    if [ "$TGTFS" = "ext2" -o "$TGTFS" = "ext3" -o "$TGTFS" = "ext4" ] && [ ! -x /usr/sbin/extlinux ]; then
+        echo "Target filesystem ($TGTFS) requires syslinux-extlinux to be installed."
+        exitclean
+    fi
+
+
     TGTLABEL=$(/sbin/blkid -s LABEL -o value $dev)
-    if [ "$TGTLABEL" != "LIVE" ]; then
+    if [ "$TGTLABEL" != "$label" ]; then
         if [ "$TGTFS" = "vfat" -o "$TGTFS" = "msdos" ]; then
-            /sbin/dosfslabel $dev LIVE
+            /sbin/dosfslabel $dev $label
             if [ $? -gt 0 ]; then
                 echo "dosfslabel failed on $dev, device not setup"
                 exitclean
             fi
         elif [ "$TGTFS" = "ext2" -o "$TGTFS" = "ext3" -o "$TGTFS" = "ext4" ]; then
-            /sbin/e2label $dev LIVE
+            /sbin/e2label $dev $label
             if [ $? -gt 0 ]; then
                 echo "e2label failed on $dev, device not setup"
                 exitclean
             fi
         else
-            echo "Unknown filesystem type. Try setting its label to LIVE and re-running"
+            echo "Unknown filesystem type. Try setting its label to $label and re-running"
             exitclean
         fi
     fi
@@ -579,7 +598,7 @@ checkFilesystem() {
     if [ -n "$TGTUUID" ]; then
         TGTLABEL="UUID=$TGTUUID"
     else
-        TGTLABEL="LABEL=LIVE"
+        TGTLABEL="LABEL=$label"
     fi
 
     if [ "$TGTFS" = "vfat" -o "$TGTFS" = "msdos" ]; then
@@ -702,13 +721,13 @@ imgtype=
 packages=
 LIVEOS=LiveOS
 HOMEFILE="home.img"
+updates=
+ks=
+label="LIVE"
 
-if [[ "$*" =~ "--help" ]]; then
-    usage
-fi
-while [ $# -gt 2 ]; do
+while true ; do
     case $1 in
-        --help)
+        --help | -h | -?)
             usage
             ;;
         --noverify)
@@ -790,17 +809,38 @@ while [ $# -gt 2 ]; do
         --delete-home)
             keephome=""
             ;;
-        *)
+        --updates)
+            updates=$2
+            shift
+            ;;
+        --ks)
+            ks=$2
+            shift
+            ;;
+	--label)
+	    label=$2
+	    shift
+	    ;;
+        --*)
             echo "invalid arg -- $1"
             shortusage
             exit 1
+            ;;
+        *)
+            break
             ;;
     esac
     shift
 done
 
-SRC=$(readlink -f "$1")
-TGTDEV=$(readlink -f "$2")
+if [ $# -ne 2 ]; then
+    echo "Missing arguments"
+    shortusage
+    exit 1
+fi
+
+SRC=$(readlink -f "$1") || :
+TGTDEV=$(readlink -f "$2") || :
 
 if [ -z "$SRC" ]; then
     echo "Missing source"
@@ -878,8 +918,8 @@ checkMBR $TGTDEV
 
 
 if [ "$overlaysizemb" -gt 0 ]; then
-    if [ "$TGTFS" = "vfat" -a "$overlaysizemb" -gt 2047 ]; then
-        echo "Can't have an overlay of 2048MB or greater on VFAT"
+    if [ "$TGTFS" = "vfat" -a "$overlaysizemb" -gt 4095 ]; then
+        echo "Can't have an overlay of 4095MB or greater on VFAT"
         exitclean
     fi
     LABEL=$(/sbin/blkid -s LABEL -o value $TGTDEV)
@@ -891,15 +931,15 @@ if [ "$overlaysizemb" -gt 0 ]; then
 fi
 
 if [ "$homesizemb" -gt 0 -a "$TGTFS" = "vfat" ]; then
-    if [ "$homesizemb" -gt 2047 ]; then
-        echo "Can't have a home overlay greater than 2048MB on VFAT"
+    if [ "$homesizemb" -gt 4095 ]; then
+        echo "Can't have a home overlay greater than 4095MB on VFAT"
         exitclean
     fi
 fi
 
 if [ "$swapsizemb" -gt 0 -a "$TGTFS" = "vfat" ]; then
-    if [ "$swapsizemb" -gt 2047 ]; then
-        echo "Can't have a swap file greater than 2048MB on VFAT"
+    if [ "$swapsizemb" -gt 4095 ]; then
+        echo "Can't have a swap file greater than 4095MB on VFAT"
         exitclean
     fi
 fi
@@ -941,17 +981,17 @@ if [[ live == $srctype ]]; then
    targets="$TGTMNT/$SYSLINUXPATH"
    [[ -n $efi ]] && targets+=" $TGTMNT$EFI_BOOT"
    [[ -n $xo ]] && targets+=" $TGTMNT/boot/olpc.fth"
-   duTable=($(du -c -B 1M $targets 2> /dev/null || :))
-   tbd=$((tbd + ${duTable[*]: -2:1}))
+   target_size=$(du -s -c -B 1M $targets 2> /dev/null | awk '/total$/ {print $1;}') || :
+   tbd=$((tbd + target_size))
 fi
 
 if [[ -n $skipcompress ]] && [[ -s $SRCMNT/LiveOS/squashfs.img ]]; then
     if mount -o loop $SRCMNT/LiveOS/squashfs.img $SRCMNT; then
         livesize=($(du -B 1M --apparent-size $SRCMNT/LiveOS/ext3fs.img))
         umount $SRCMNT
-        if ((livesize > 2048)) &&  [[ vfat == $TGTFS ]]; then
+        if ((livesize > 4095)) &&  [[ vfat == $TGTFS ]]; then
             echo "
-            An uncompressed image size greater than 2048 MB is not suitable
+            An uncompressed image size greater than 4095 MB is not suitable
             for a VFAT-formatted device.  The compressed SquashFS will be
             copied to the target device.
             "
@@ -973,12 +1013,11 @@ if [[ live == $srctype ]]; then
     sources+=" $SRCMNT/isolinux $SRCMNT/syslinux"
     [[ -n $efi ]] && sources+=" $SRCMNT$EFI_BOOT"
     [[ -n $xo ]] && sources+=" $SRCMNT/boot/olpc.fth"
-    duTable=($(du -c -B 1M "$thisScriptpath" $sources 2> /dev/null || :))
-    livesize=$((livesize + ${duTable[*]: -2:1}))
+    source_size=$(du -s -c -B 1M "$thisScriptpath" $sources 2> /dev/null | awk '/total$/ {print $1;}') || :
+    livesize=$((livesize + source_size))
 fi
 
-freespace=($(df -B 1M --total $TGTDEV))
-freespace=${freespace[*]: -2:1}
+freespace=$(df -B 1M --total $TGTDEV | awk '/^total/ {print $4;}')
 
 if [[ live == $srctype ]]; then
     tba=$((overlaysizemb + homesizemb + livesize + swapsizemb))
@@ -1157,9 +1196,9 @@ if [ -n "$packages" -a -z "$skipcopy" ]; then
         copyFile "$SRC" "$TGTMNT/"
 
         # Setup a repo= to point to the .iso
-        sed -i -e "s;initrd.img;initrd.img repo=hd:$TGTLABEL:/;g" $BOOTCONFIG
+        sed -i -e "s;initrd.img;initrd.img inst.repo=hd:$TGTLABEL:/;g" $BOOTCONFIG
         if [ -n "$efi" ]; then
-            sed -i -e "s;vmlinuz;vmlinuz repo=hd:$TGTLABEL:/;g" $BOOTCONFIG_EFI
+            sed -i -e "s;vmlinuz;vmlinuz inst.repo=hd:$TGTLABEL:/;g" $BOOTCONFIG_EFI
         fi
     else
         echo "Copying package data from $SRC to device"
@@ -1187,10 +1226,21 @@ if [ "$srctype" = "live" ]; then
     fi
 fi
 
+# Setup the updates.img
+if [ -n "$updates" ]; then
+    copyFile "$updates" "$TGTMNT/updates.img"
+    kernelargs+=" inst.updates=hd:$TGTLABEL:/updates.img"
+fi
+
+# Setup the kickstart
+if [ -n "$ks" ]; then
+    copyFile "$ks" "$TGTMNT/ks.cfg"
+    kernelargs+=" inst.ks=hd:$TGTLABEL:/ks.cfg"
+fi
 
 echo "Updating boot config file"
 # adjust label and fstype
-sed -i -e "s/CDLABEL=[^ ]*/$TGTLABEL/" -e "s/rootfstype=[^ ]*/rootfstype=$TGTFS/" -e "s/LABEL=[^ ]*/$TGTLABEL/" $BOOTCONFIG  $BOOTCONFIG_EFI
+sed -i -e "s/CDLABEL=[^ ]*/$TGTLABEL/" -e "s/rootfstype=[^ ]*/rootfstype=$TGTFS/" -e "s/LABEL=[^ :]*/$TGTLABEL/" $BOOTCONFIG  $BOOTCONFIG_EFI
 if [ -n "$kernelargs" ]; then
     sed -i -e "s;initrd.\?\.img;& ${kernelargs};" $BOOTCONFIG
     if [ -n "$efi" ]; then
@@ -1212,13 +1262,13 @@ fi
 # DVD Installer for netinst
 if [ "$srctype" != "live" ]; then
     if [ "$imgtype" = "install" ]; then
-        sed -i -e "s;initrd.img;initrd.img stage2=hd:$TGTLABEL:/images/install.img;g" $BOOTCONFIG
+        sed -i -e "s;initrd.img;initrd.img inst.stage2=hd:$TGTLABEL:/images/install.img;g" $BOOTCONFIG
         if [ -n "$efi" ]; then
-            sed -i -e "s;vmlinuz;vmlinuz stage2=hd:$TGTLABEL:/images/install.img;g" $BOOTCONFIG_EFI
+            sed -i -e "s;vmlinuz;vmlinuz inst.stage2=hd:$TGTLABEL:/images/install.img;g" $BOOTCONFIG_EFI
         fi
     else
         # The initrd has everything, so no stage2
-        sed -i -e "s;stage2=\S*;;g" $BOOTCONFIG $BOOTCONFIG_EFI
+        sed -i -e "s;\S*stage2=\S*;;g" $BOOTCONFIG $BOOTCONFIG_EFI
     fi
 fi
 
@@ -1241,7 +1291,7 @@ if [ "$overlaysizemb" -gt 0 ]; then
             dd if=/dev/null of=$TGTMNT/$LIVEOS/$OVERFILE count=1 bs=1M seek=$overlaysizemb
         fi
     fi
-    sed -i -e "s/r*d*.*live.*ima*ge*/& overlay=${TGTLABEL}/"\
+    sed -i -e "s/r*d*.*live.*ima*ge*/& rd.live.overlay=${TGTLABEL}/"\
               $BOOTCONFIG $BOOTCONFIG_EFI
     sed -i -e "s/\ ro\ /\ rw\ /" $BOOTCONFIG  $BOOTCONFIG_EFI
 fi

@@ -23,7 +23,7 @@ import logging
 
 import yum
 import rpmUtils
-import pykickstart.parser
+from pykickstart.constants import GROUP_DEFAULT, GROUP_REQUIRED, GROUP_ALL
 
 from imgcreate.errors import *
 
@@ -36,8 +36,9 @@ class TextProgress(object):
                 hdlr.stream.write(msg)
                 hdlr.stream.flush()
 
-    def start(self, filename, url, *args, **kwargs):
-        self.emit(logging.INFO, "Retrieving %s " % (url,))
+    def start(self, filename=None, url=None, *args, **kwargs):
+        text = kwargs.get("text", "")
+        self.emit(logging.INFO, "Retrieving %s " % (url or text))
         self.url = url
     def update(self, *args):
         pass
@@ -135,13 +136,13 @@ class LiveCDYum(yum.YumBase):
         else:
             logging.warn("No such package %s to remove" %(pkg,))
 
-    def selectGroup(self, grp, include = pykickstart.parser.GROUP_DEFAULT):
+    def selectGroup(self, grp, include = GROUP_DEFAULT):
         # default to getting mandatory and default packages from a group
         # unless we have specific options from kickstart
         package_types = ['mandatory', 'default']
-        if include == pykickstart.parser.GROUP_REQUIRED:
+        if include == GROUP_REQUIRED:
             package_types.remove('default')
-        elif include == pykickstart.parser.GROUP_ALL:
+        elif include == GROUP_ALL:
             package_types.append('optional')
         yum.YumBase.selectGroup(self, grp, group_package_types=package_types)
 
@@ -157,7 +158,7 @@ class LiveCDYum(yum.YumBase):
                     option = option.replace("$releasever", self.releasever)
                 else:
                     try:
-                        option = option.replace("$releasever", yum.config._getsysver("/", "redhat-release"))
+                        option = option.replace("$releasever", yum.config._getsysver("/", ("system-release(release)", "redhat-release")))
                     except yum.Errors.YumBaseError:
                         raise CreatorError("$releasever in repo url, but no releasever set")
             return option
@@ -216,7 +217,7 @@ class LiveCDYum(yum.YumBase):
         self.populateTs(keepold=0)
         deps = self.ts.check()
         if len(deps) != 0:
-            raise CreatorError("Dependency check failed : %s" % "\n".join(deps))
+            raise CreatorError("Dependency check failed : %s" % "\n".join([str(d) for d in deps]))
         rc = self.ts.order()
         if rc != 0:
             raise CreatorError("ordering packages for installation failedr. rc = %s" % rc)
